@@ -122,7 +122,6 @@ impl ksni::Tray for QuotaLumeTray {
                 items.push(
                     StandardItem {
                         label,
-                        enabled: false,
                         ..Default::default()
                     }
                     .into(),
@@ -143,7 +142,6 @@ impl ksni::Tray for QuotaLumeTray {
                     items.push(
                         StandardItem {
                             label: text,
-                            enabled: false,
                             ..Default::default()
                         }
                         .into(),
@@ -153,7 +151,6 @@ impl ksni::Tray for QuotaLumeTray {
                     items.push(
                         StandardItem {
                             label: format!("  {msg}"),
-                            enabled: false,
                             ..Default::default()
                         }
                         .into(),
