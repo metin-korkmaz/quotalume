@@ -14,6 +14,17 @@ fn read_snapshots(lock: &RwLock<Vec<ProviderSnapshot>>) -> std::sync::RwLockRead
     lock.read().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Builds a read-only-looking `DBusMenu` row that remains legible in GNOME 49's
+/// `AppIndicator` renderer. Its default activation callback is intentionally a no-op.
+fn informational_item(label: impl Into<String>) -> ksni::menu::StandardItem<QuotaLumeTray> {
+    ksni::menu::StandardItem {
+        label: label.into(),
+        enabled: true,
+        disposition: ksni::menu::Disposition::Informative,
+        ..Default::default()
+    }
+}
+
 impl ksni::Tray for QuotaLumeTray {
     fn id(&self) -> String {
         env!("CARGO_PKG_NAME").into()
@@ -99,14 +110,7 @@ impl ksni::Tray for QuotaLumeTray {
         items.push(MenuItem::Separator);
 
         if snapshots.is_empty() {
-            items.push(
-                StandardItem {
-                    label: "  Yükleniyor...".into(),
-                    enabled: false,
-                    ..Default::default()
-                }
-                .into(),
-            );
+            items.push(informational_item("  Yükleniyor...").into());
             items.push(MenuItem::Separator);
         } else {
             for snapshot in snapshots.iter() {
@@ -119,13 +123,7 @@ impl ksni::Tray for QuotaLumeTray {
                         format!("{} ✗", snapshot.provider.display_name())
                     }
                 };
-                items.push(
-                    StandardItem {
-                        label,
-                        ..Default::default()
-                    }
-                    .into(),
-                );
+                items.push(informational_item(label).into());
                 for metric in &snapshot.metrics {
                     let text = match metric {
                         UsageMetric::Window(w) => {
@@ -139,22 +137,10 @@ impl ksni::Tray for QuotaLumeTray {
                         }
                         UsageMetric::Text { label, value } => format!("  {label}: {value}"),
                     };
-                    items.push(
-                        StandardItem {
-                            label: text,
-                            ..Default::default()
-                        }
-                        .into(),
-                    );
+                    items.push(informational_item(text).into());
                 }
                 if let Some(ref msg) = snapshot.message {
-                    items.push(
-                        StandardItem {
-                            label: format!("  {msg}"),
-                            ..Default::default()
-                        }
-                        .into(),
-                    );
+                    items.push(informational_item(format!("  {msg}")).into());
                 }
                 items.push(MenuItem::Separator);
             }
