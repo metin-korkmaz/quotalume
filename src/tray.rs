@@ -1,12 +1,15 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use ksni::TrayMethods;
-use tokio::sync::RwLock;
 
 use crate::model::{Availability, ProviderSnapshot, UsageMetric};
 
 pub struct QuotaLumeTray {
     pub snapshots: Arc<RwLock<Vec<ProviderSnapshot>>>,
+}
+
+fn read_snapshots(lock: &RwLock<Vec<ProviderSnapshot>>) -> std::sync::RwLockReadGuard<'_, Vec<ProviderSnapshot>> {
+    lock.read().unwrap_or_else(|e| e.into_inner())
 }
 
 impl ksni::Tray for QuotaLumeTray {
@@ -19,7 +22,7 @@ impl ksni::Tray for QuotaLumeTray {
     }
 
     fn title(&self) -> String {
-        let snapshots = self.snapshots.blocking_read();
+        let snapshots = read_snapshots(&self.snapshots);
         let lowest = snapshots
             .iter()
             .filter_map(|s| s.lowest_remaining_percent())
@@ -33,7 +36,7 @@ impl ksni::Tray for QuotaLumeTray {
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
-        let snapshots = self.snapshots.blocking_read();
+        let snapshots = read_snapshots(&self.snapshots);
         let title = "QuotaLume".to_string();
         let mut lines = Vec::new();
         for snapshot in snapshots.iter() {
@@ -80,7 +83,7 @@ impl ksni::Tray for QuotaLumeTray {
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::*;
 
-        let snapshots = self.snapshots.blocking_read();
+        let snapshots = read_snapshots(&self.snapshots);
         let mut items: Vec<MenuItem<Self>> = Vec::new();
 
         // Header
@@ -150,14 +153,6 @@ impl ksni::Tray for QuotaLumeTray {
         // Footer actions
         items.push(
             StandardItem {
-                label: "Yenile".into(),
-                icon_name: "view-refresh".into(),
-                ..Default::default()
-            }
-            .into(),
-        );
-        items.push(
-            StandardItem {
                 label: "Çıkış".into(),
                 icon_name: "application-exit".into(),
                 activate: Box::new(|_| std::process::exit(0)),
@@ -166,14 +161,13 @@ impl ksni::Tray for QuotaLumeTray {
             .into(),
         );
 
-        drop(snapshots);
         items
     }
 }
 
 fn render_bar(used_percent: f64) -> String {
     let filled = ((used_percent / 100.0) * 10.0).round() as usize;
-    let filled = filled.min(10).max(0);
+    let filled = filled.clamp(0, 10);
     let color = if used_percent <= 50.0 {
         "🟩"
     } else if used_percent <= 80.0 {
@@ -182,16 +176,13 @@ fn render_bar(used_percent: f64) -> String {
         "🟥"
     };
     let empty = "⬜";
-    let bar = format!("{}{}", color.repeat(filled), empty.repeat(10 - filled));
-    bar
+    format!("{}{}", color.repeat(filled), empty.repeat(10 - filled))
 }
 
 pub async fn spawn_tray(snapshots: Arc<RwLock<Vec<ProviderSnapshot>>>) -> anyhow::Result<()> {
     let tray = QuotaLumeTray { snapshots };
-    let handle = tray.spawn().await?;
+    let _handle = tray.spawn().await?;
     tracing::info!("System tray başlatıldı");
-    // Keep the tray alive
     std::future::pending::<()>().await;
-    let _ = handle;
     Ok(())
 }

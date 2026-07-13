@@ -1,5 +1,6 @@
+use std::sync::RwLock;
+
 use reqwest::Client;
-use tokio::sync::RwLock;
 
 use crate::config::{claude_credentials_path, codex_auth_path, Config};
 use crate::credentials::{parse_claude_credentials, parse_codex_auth};
@@ -197,15 +198,16 @@ async fn fetch_openrouter(client: &Client, config: &Config) -> ProviderSnapshot 
         }
     };
 
-    let key_body = client
+    let key_body: Option<String> = match client
         .get(key_url)
         .bearer_auth(&api_key)
         .header("Accept", "application/json")
         .send()
         .await
-        .ok()
-        .filter(|r| r.status().is_success())
-        .and_then(|r| futures::executor::block_on(r.text()).ok());
+    {
+        Ok(r) if r.status().is_success() => r.text().await.ok(),
+        _ => None,
+    };
 
     match credits_body {
         Some(body) => openrouter::parse_credits_and_key(&body, key_body.as_deref())
