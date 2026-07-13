@@ -1,5 +1,3 @@
-use std::sync::RwLock;
-
 use reqwest::Client;
 
 use crate::config::{claude_credentials_path, codex_auth_path, Config};
@@ -293,4 +291,3 @@ async fn fetch_ollama(client: &Client, config: &Config) -> ProviderSnapshot {
     )
 }
 
-pub type SnapshotStore = RwLock<Vec<ProviderSnapshot>>;

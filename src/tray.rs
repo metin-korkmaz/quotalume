@@ -1,15 +1,17 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 
 use ksni::TrayMethods;
 
 use crate::model::{Availability, ProviderSnapshot, UsageMetric};
 
+pub type SnapshotStore = Arc<RwLock<Vec<ProviderSnapshot>>>;
+
 pub struct QuotaLumeTray {
-    pub snapshots: Arc<RwLock<Vec<ProviderSnapshot>>>,
+    pub snapshots: SnapshotStore,
 }
 
 fn read_snapshots(lock: &RwLock<Vec<ProviderSnapshot>>) -> std::sync::RwLockReadGuard<'_, Vec<ProviderSnapshot>> {
-    lock.read().unwrap_or_else(|e| e.into_inner())
+    lock.read().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl ksni::Tray for QuotaLumeTray {
@@ -25,13 +27,13 @@ impl ksni::Tray for QuotaLumeTray {
         let snapshots = read_snapshots(&self.snapshots);
         let lowest = snapshots
             .iter()
-            .filter_map(|s| s.lowest_remaining_percent())
+            .filter_map(ProviderSnapshot::lowest_remaining_percent)
             .reduce(f64::min);
         match lowest {
-            Some(pct) if pct <= 20.0 => format!("🔴 {:.0}%", pct),
-            Some(pct) if pct <= 50.0 => format!("🟡 {:.0}%", pct),
-            Some(pct) => format!("🟢 {:.0}%", pct),
-            None => "⚡".into(),
+            Some(pct) if pct <= 20.0 => format!("🔴 {pct:.0}%"),
+            Some(pct) if pct <= 50.0 => format!("🟡 {pct:.0}%"),
+            Some(pct) => format!("🟢 {pct:.0}%"),
+            None => "⚡ QuotaLume".into(),
         }
     }
 
@@ -81,12 +83,11 @@ impl ksni::Tray for QuotaLumeTray {
     }
 
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
-        use ksni::menu::*;
+        use ksni::menu::{MenuItem, StandardItem};
 
         let snapshots = read_snapshots(&self.snapshots);
         let mut items: Vec<MenuItem<Self>> = Vec::new();
 
-        // Header
         items.push(
             StandardItem {
                 label: "⚡ QuotaLume".into(),
@@ -97,60 +98,71 @@ impl ksni::Tray for QuotaLumeTray {
         );
         items.push(MenuItem::Separator);
 
-        for snapshot in snapshots.iter() {
-            let label = match snapshot.availability {
-                Availability::Available => format!("{} ✓", snapshot.provider.display_name()),
-                Availability::NotConfigured => {
-                    format!("{} ○ (yapılandırılmamış)", snapshot.provider.display_name())
-                }
-                Availability::Unavailable => {
-                    format!("{} ✗", snapshot.provider.display_name())
-                }
-            };
+        if snapshots.is_empty() {
             items.push(
                 StandardItem {
-                    label,
+                    label: "  Yükleniyor...".into(),
                     enabled: false,
                     ..Default::default()
                 }
                 .into(),
             );
-            for metric in &snapshot.metrics {
-                let text = match metric {
-                    UsageMetric::Window(w) => {
-                        let bar = render_bar(w.used_percent);
-                        format!("  {} {bar} {:.0}%", w.label, w.used_percent)
+            items.push(MenuItem::Separator);
+        } else {
+            for snapshot in snapshots.iter() {
+                let label = match snapshot.availability {
+                    Availability::Available => format!("{} ✓", snapshot.provider.display_name()),
+                    Availability::NotConfigured => {
+                        format!("{} ○ (yapılandırılmamış)", snapshot.provider.display_name())
                     }
-                    UsageMetric::Counter { label, value } => format!("  {label}: {value}"),
-                    UsageMetric::Money { label, used, limit, currency } => {
-                        let limit_str = limit.map(|l| format!("/{l:.2}")).unwrap_or_default();
-                        format!("  {label}: {currency} {used:.2}{limit_str}")
+                    Availability::Unavailable => {
+                        format!("{} ✗", snapshot.provider.display_name())
                     }
-                    UsageMetric::Text { label, value } => format!("  {label}: {value}"),
                 };
                 items.push(
                     StandardItem {
-                        label: text,
+                        label,
                         enabled: false,
                         ..Default::default()
                     }
                     .into(),
                 );
+                for metric in &snapshot.metrics {
+                    let text = match metric {
+                        UsageMetric::Window(w) => {
+                            let bar = render_bar(w.used_percent);
+                            format!("  {} {bar} {:.0}%", w.label, w.used_percent)
+                        }
+                        UsageMetric::Counter { label, value } => format!("  {label}: {value}"),
+                        UsageMetric::Money { label, used, limit, currency } => {
+                            let limit_str = limit.map(|l| format!("/{l:.2}")).unwrap_or_default();
+                            format!("  {label}: {currency} {used:.2}{limit_str}")
+                        }
+                        UsageMetric::Text { label, value } => format!("  {label}: {value}"),
+                    };
+                    items.push(
+                        StandardItem {
+                            label: text,
+                            enabled: false,
+                            ..Default::default()
+                        }
+                        .into(),
+                    );
+                }
+                if let Some(ref msg) = snapshot.message {
+                    items.push(
+                        StandardItem {
+                            label: format!("  {msg}"),
+                            enabled: false,
+                            ..Default::default()
+                        }
+                        .into(),
+                    );
+                }
+                items.push(MenuItem::Separator);
             }
-            if let Some(ref msg) = snapshot.message {
-                items.push(
-                    StandardItem {
-                        label: format!("  {msg}"),
-                        enabled: false,
-                        ..Default::default()
-                    }
-                    .into(),
-                );
-            }
-            items.push(MenuItem::Separator);
         }
 
-        // Footer actions
         items.push(
             StandardItem {
                 label: "Çıkış".into(),
@@ -179,10 +191,18 @@ fn render_bar(used_percent: f64) -> String {
     format!("{}{}", color.repeat(filled), empty.repeat(10 - filled))
 }
 
-pub async fn spawn_tray(snapshots: Arc<RwLock<Vec<ProviderSnapshot>>>) -> anyhow::Result<()> {
+pub async fn spawn_tray(
+    snapshots: SnapshotStore,
+    refresh_rx: tokio::sync::mpsc::UnboundedReceiver<()>,
+) -> anyhow::Result<()> {
     let tray = QuotaLumeTray { snapshots };
-    let _handle = tray.spawn().await?;
+    let handle = tray.spawn().await?;
     tracing::info!("System tray başlatıldı");
-    std::future::pending::<()>().await;
-    Ok(())
+
+    let mut refresh_rx = refresh_rx;
+    loop {
+        refresh_rx.recv().await;
+        tracing::debug!("Tray menüsü yenileniyor");
+        handle.update(|_tray| {}).await;
+    }
 }

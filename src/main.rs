@@ -1,10 +1,11 @@
 use std::sync::{Arc, RwLock};
 
 use clap::Parser;
+use tokio::sync::mpsc;
 
 use quotalume::config::Config;
-use quotalume::fetch::{fetch_all, SnapshotStore};
-use quotalume::tray::spawn_tray;
+use quotalume::fetch::fetch_all;
+use quotalume::tray::{spawn_tray, SnapshotStore};
 
 #[derive(Parser)]
 #[command(name = "quotalume", version, about = "AI kota monitörü — Linux status bar")]
@@ -52,25 +53,34 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let store: Arc<SnapshotStore> = Arc::new(RwLock::new(Vec::new()));
-    let store_clone = Arc::clone(&store);
+    let store: SnapshotStore = Arc::new(RwLock::new(Vec::new()));
+    let (refresh_tx, refresh_rx) = mpsc::unbounded_channel::<()>();
+
+    // Initial fetch before tray spawns
+    tracing::info!("İlk veri fetch ediliyor...");
+    let snapshots = fetch_all(&config).await;
+    if let Ok(mut guard) = store.write() {
+        *guard = snapshots;
+    }
+    tracing::info!("İlk fetch tamamlandı, tray başlatılıyor");
 
     // Background refresh loop
+    let store_clone = Arc::clone(&store);
+    let refresh_tx_clone = refresh_tx.clone();
+    let refresh_secs = config.refresh_seconds.max(60);
     tokio::spawn(async move {
         loop {
+            tokio::time::sleep(std::time::Duration::from_secs(refresh_secs)).await;
             tracing::info!("Kota verileri yenileniyor...");
             let snapshots = fetch_all(&config).await;
             if let Ok(mut guard) = store_clone.write() {
                 *guard = snapshots;
             }
-            tokio::time::sleep(std::time::Duration::from_secs(
-                config.refresh_seconds.max(60),
-            ))
-            .await;
+            let _ = refresh_tx_clone.send(());
         }
     });
 
-    // Spawn tray (blocks forever)
+    // Spawn tray — it listens for refresh signals to update the menu
     tracing::info!("QuotaLume başlatılıyor — status bar simgesi bekleniyor");
-    spawn_tray(store).await
+    spawn_tray(store, refresh_rx).await
 }
