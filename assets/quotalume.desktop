@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=QuotaLume
+Comment=AI quota monitor for Linux status bar
+Exec=quotalume
+Icon=quotalume
+Terminal=false
+Categories=Utility;Monitor;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
